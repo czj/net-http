@@ -222,7 +222,8 @@ module Net::HTTPHeader
   # Note that some field values may be retrieved via convenience methods;
   # see {Getters}[rdoc-ref:Net::HTTPHeader@Getters].
   def [](key)
-    a = @header[key.downcase.to_s] or return nil
+    # Stored keys are downcased, so a hit on +key+ itself needs no copy.
+    a = @header[key] || @header[key.downcase.to_s] or return nil
     a.join(', ')
   end
 
@@ -263,36 +264,38 @@ module Net::HTTPHeader
     if @header.key?(stringified_downcased_key)
       append_field_value(@header[stringified_downcased_key], val, key)
     else
-      set_field(key, val)
+      set_field(key, val, stringified_downcased_key)
     end
   end
 
   # :stopdoc:
   private def validate_field_name(key)
-    if key.to_s.bytesize > MAX_KEY_LENGTH
-      raise ArgumentError, "too long (#{key.to_s.bytesize} bytes) header: #{key.to_s[0, 30].inspect}..."
+    key = key.to_s
+    if key.bytesize > MAX_KEY_LENGTH
+      raise ArgumentError, "too long (#{key.bytesize} bytes) header: #{key[0, 30].inspect}..."
     end
-    if /[\x00-\x1f\x7f:]/n.match?(key.to_s.b)
-      raise ArgumentError, "header field name cannot include control characters or colon: #{key.to_s[0, 30].inspect}"
+    # An ASCII-only string matches like its binary copy, without the copy.
+    if /[\x00-\x1f\x7f:]/n.match?(key.ascii_only? ? key : key.b)
+      raise ArgumentError, "header field name cannot include control characters or colon: #{key[0, 30].inspect}"
     end
   end
 
-  private def set_field(key, val)
+  private def set_field(key, val, downcased_key = nil)
     validate_field_name(key)
     case val
     when Enumerable
       ary = []
       append_field_value(ary, val, key)
-      @header[key.downcase.to_s] = ary
+      @header[downcased_key || key.downcase.to_s] = ary
     else
       val = val.to_s # for compatibility use to_s instead of to_str
       if val.bytesize > MAX_FIELD_LENGTH
         raise ArgumentError, "header #{key} has too long field value: #{val.bytesize} bytes (limit #{MAX_FIELD_LENGTH})"
       end
-      if val.b.count("\r\n") > 0
+      if (val.ascii_only? ? val : val.b).count("\r\n") > 0
         raise ArgumentError, 'header field value cannot include CR/LF'
       end
-      @header[key.downcase.to_s] = [val]
+      @header[downcased_key || key.downcase.to_s] = [val]
     end
   end
 
@@ -305,7 +308,7 @@ module Net::HTTPHeader
       if val.bytesize > MAX_FIELD_LENGTH
         raise ArgumentError, "header #{key} has too long field value: #{val.bytesize} bytes (limit #{MAX_FIELD_LENGTH})"
       end
-      if /[\r\n]/n.match?(val.b)
+      if /[\r\n]/n.match?(val.ascii_only? ? val : val.b)
         raise ArgumentError, 'header field value cannot include CR/LF'
       end
       ary.push val
@@ -479,7 +482,7 @@ module Net::HTTPHeader
   #   req.key?('Nosuch') # => false
   #
   def key?(key)
-    @header.key?(key.downcase.to_s)
+    @header.key?(key) || @header.key?(key.downcase.to_s)
   end
 
   # Returns a hash of the key/value pairs:
@@ -527,7 +530,7 @@ module Net::HTTPHeader
   def range
     return nil unless @header['range']
 
-    value = self['Range']
+    value = self['range']
     # byte-range-set = *( "," OWS ) ( byte-range-spec / suffix-byte-range-spec )
     #   *( OWS "," [ OWS ( byte-range-spec / suffix-byte-range-spec ) ] )
     # corrected collected ABNF
@@ -639,6 +642,8 @@ module Net::HTTPHeader
   def content_length
     values = @header['content-length']
     return nil if values.nil?
+    # The usual case, a single field of digits, needs no copies.
+    return values[0].to_i if values.size == 1 && /\A\d+\z/.match?(values[0])
 
     lengths = []
     values.each do |value|
@@ -698,7 +703,7 @@ module Net::HTTPHeader
   # See {RFC 9112 Section 6.3}[https://www.rfc-editor.org/rfc/rfc9112.html#section-6.3].
   def chunked?
     return false unless @header['transfer-encoding']
-    field = self['Transfer-Encoding']
+    field = self['transfer-encoding']
     (/(?:\A|[^\-\w])chunked(?![\-\w])\s*(?:,\s*)*\z/i =~ field) ? true : false
   end
 
@@ -714,7 +719,7 @@ module Net::HTTPHeader
   #
   def content_range
     return nil unless @header['content-range']
-    m = %r<\A\s*(\w+)\s+(\d+)-(\d+)/(\d+|\*)>.match(self['Content-Range']) or
+    m = %r<\A\s*(\w+)\s+(\d+)-(\d+)/(\d+|\*)>.match(self['content-range']) or
         raise Net::HTTPHeaderSyntaxError, 'wrong Content-Range format'
     return unless m[1] == 'bytes'
     m[2].to_i .. m[3].to_i
