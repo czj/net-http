@@ -127,6 +127,46 @@ EOS
     assert_equal 'wrong header line format', e.message
   end
 
+  def test_header_lines_split_at_first_colon
+    rng = Random.new(42)
+    spaces = ["", " ", "  ", "\t", "\v", "\f", "\r", "\0"]
+    names = ["Content-Type", "x-alice", "X Example", "a", "\xC3\xA9t\xC3\xA9", ""]
+    values = ["text/html", "alice@example.com", "a : b", "a:b", "", "\xC3\xA9", "x\0", " \0"]
+    2000.times do
+      lines = Array.new(rng.rand(1..3)) do
+        colon = rng.rand(10) == 0 ? "" : ":"
+        [spaces.sample(random: rng), names.sample(random: rng), spaces.sample(random: rng), colon,
+         spaces.sample(random: rng), values.sample(random: rng), spaces.sample(random: rng)].join
+      end
+      next if lines.include?("") # an empty line ends the header
+      fields = []
+      lines.each do |line|
+        line = line.b
+        if line.start_with?(" ", "\t") && fields.last&.last
+          folded = line.strip
+          value = fields.last.last
+          value << " " unless folded.empty? || value.empty?
+          value << folded
+        else
+          fields << line.strip.split(/\s*:\s*/, 2)
+        end
+      end
+      io = Net::BufferedIO.new(StringIO.new("HTTP/1.1 200 OK\r\n#{lines.join("\r\n")}\r\n\r\n"))
+      # The first invalid line, in order, decides the error.
+      error = fields.each do |key, value|
+        break Net::HTTPBadResponse if value.nil?
+        break ArgumentError if /[\x00-\x1f\x7f]/n.match?(key) || /[\r\n]/.match?(value)
+      end
+      if error.is_a?(Class)
+        assert_raise(error, lines.inspect) { Net::HTTPResponse.read_new(io) }
+      else
+        expected = {}
+        fields.each { |key, value| (expected[key.downcase] ||= []) << value }
+        assert_equal(expected, Net::HTTPResponse.read_new(io).to_hash, lines.inspect)
+      end
+    end
+  end
+
   def test_read_body
     io = dummy_io(<<EOS)
 HTTP/1.1 200 OK

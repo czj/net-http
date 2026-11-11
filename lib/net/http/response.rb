@@ -140,6 +140,10 @@ class Net::HTTPResponse
   # final response.
   MAX_INFORMATIONAL_RESPONSES = 100
 
+  # The bytes matched by \s: \t, \n, \v, \f, \r and space.
+  HEADER_SPACE = [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20].freeze
+  private_constant :HEADER_SPACE
+
   class << self
     # true if the response has a body.
     def body_permitted?
@@ -190,7 +194,7 @@ class Net::HTTPResponse
         raise Net::HTTPBadResponse, 'response header too large' if remaining < 0
         line = line.chomp
         break if line.empty?
-        if line[0] == ?\s or line[0] == ?\t and value
+        if line.start_with?(" ", "\t") and value
           folded = line.strip
           unless folded.empty?
             value << ' ' unless value.empty?
@@ -198,8 +202,23 @@ class Net::HTTPResponse
           end
         else
           yield key, value if key
-          key, value = line.strip.split(/\s*:\s*/, 2)
-          raise Net::HTTPBadResponse, 'wrong header line format' if value.nil?
+          line.strip!
+          if line.encoding == Encoding::BINARY || line.ascii_only?
+            # Same as line.split(/\s*:\s*/, 2), without the intermediate
+            # array; character and byte offsets are the same here. Lines read
+            # through Net::BufferedIO are binary: split serves other sockets.
+            colon = line.index(':') or
+              raise Net::HTTPBadResponse, 'wrong header line format'
+            key_end = colon
+            key_end -= 1 while key_end > 0 && HEADER_SPACE.include?(line.getbyte(key_end - 1))
+            value_start = colon + 1
+            value_start += 1 while HEADER_SPACE.include?(line.getbyte(value_start))
+            key = line.byteslice(0, key_end)
+            value = line.byteslice(value_start, line.bytesize - value_start)
+          else
+            key, value = line.split(/\s*:\s*/, 2)
+            raise Net::HTTPBadResponse, 'wrong header line format' if value.nil?
+          end
         end
       end
       yield key, value if key
