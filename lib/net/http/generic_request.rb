@@ -12,6 +12,10 @@ class Net::HTTPGenericRequest
 
   include Net::HTTPHeader
 
+  # Request fields that turn off the automatic decoding of the response body.
+  DECODE_CONTENT_OVERRIDES = %w[accept-encoding range].freeze
+  private_constant :DECODE_CONTENT_OVERRIDES
+
   def initialize(m, reqbody, resbody, uri_or_path, initheader = nil) # :nodoc:
     @method = m
     @request_has_body = reqbody
@@ -36,7 +40,7 @@ class Net::HTTPGenericRequest
     if Net::HTTP::HAVE_ZLIB then
       if !initheader ||
          !initheader.keys.any? { |k|
-           %w[accept-encoding range].include? k.downcase
+           DECODE_CONTENT_OVERRIDES.include? k.downcase
          } then
         @decode_content = true if @response_has_body
         initheader = initheader ? initheader.dup : {}
@@ -422,12 +426,11 @@ class Net::HTTPGenericRequest
   end
 
   def write_header(sock, ver, path)
-    reqline = "#{@method} #{path} HTTP/#{ver}"
-    if /[\r\n]/ =~ reqline
+    buf = +"#{@method} #{path} HTTP/#{ver}"
+    if /[\r\n]/ =~ buf
       raise ArgumentError, "A Request-Line must not contain CR or LF"
     end
-    buf = +''
-    buf << reqline << "\r\n"
+    buf << "\r\n"
     each_capitalized do |k,v|
       buf << "#{k}: #{v}\r\n"
     end

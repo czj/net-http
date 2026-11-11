@@ -287,6 +287,31 @@ class HTTPHeaderTest < Test::Unit::TestCase
     end
   end
 
+  def test_each_capitalized_common_fields
+    expected = %w[
+      Accept Accept-Charset Accept-Encoding Accept-Language Authorization
+      Cache-Control Connection Content-Encoding Content-Length Content-Type
+      Cookie Expect Host If-Match If-Modified-Since If-None-Match
+      If-Unmodified-Since Origin Pragma Proxy-Authorization Range Referer Te
+      Transfer-Encoding User-Agent X-Alice-Id Www-Authenticate
+    ]
+    expected.each { |name| @c[name.upcase] = 'a' }
+    names = @c.each_capitalized.map { |k, _| k }
+    assert_equal expected, names
+    names.each { |k| k << '!' } # each yields its own strings
+    assert_equal expected, @c.each_capitalized.map { |k, _| k }
+  end
+
+  def test_each_capitalized_keeps_name_encoding
+    [Encoding::BINARY, Encoding::US_ASCII, Encoding::UTF_8].each do |encoding|
+      c = C.new
+      c.initialize_http_header({})
+      c['host'.encode(encoding)] = 'example.com'
+      c['x-alice'.encode(encoding)] = 'a'
+      assert_equal [encoding, encoding], c.each_capitalized.map { |k, _| k.encoding }, encoding.name
+    end
+  end
+
   def test_key?
     @c['My-Header'] = 'test'
     assert_equal true, @c.key?('My-Header')
