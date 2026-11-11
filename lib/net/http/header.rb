@@ -188,7 +188,8 @@ module Net::HTTPHeader
     @header = {}
     return unless initheader
     initheader.each do |key, value|
-      warn "net/http: duplicated HTTP header: #{key}", uplevel: 3 if key?(key) and $VERBOSE
+      downcased_key = key.downcase.to_s
+      warn "net/http: duplicated HTTP header: #{key}", uplevel: 3 if @header.key?(downcased_key) and $VERBOSE
       if value.nil?
         warn "net/http: nil HTTP header: #{key}", uplevel: 3 if $VERBOSE
       else
@@ -200,7 +201,7 @@ module Net::HTTPHeader
         if value.count("\r\n") > 0
           raise ArgumentError, "header #{key} has field value #{value.inspect}, this cannot include CR/LF"
         end
-        @header[key.downcase.to_s] = [value]
+        @header[downcased_key] = [value]
       end
     end
   end
@@ -508,8 +509,23 @@ module Net::HTTPHeader
 
   alias canonical_each each_capitalized
 
+  # Common field names, capitalized once: a copy costs one string, where
+  # splitting costs an array and a string per hyphen-separated part.
+  CAPITALIZED_FIELD_NAMES = %w[
+    accept accept-charset accept-encoding accept-language authorization
+    cache-control connection content-encoding content-length content-type
+    cookie expect host if-match if-modified-since if-none-match
+    if-unmodified-since origin pragma proxy-authorization range referer te
+    transfer-encoding user-agent
+  ].to_h { |name| [name, name.split('-').map(&:capitalize).join('-').freeze] }.freeze
+  private_constant :CAPITALIZED_FIELD_NAMES
+
   def capitalize(name)  # :nodoc:
-    name.to_s.split('-'.freeze).map {|s| s.capitalize }.join('-'.freeze)
+    if (capitalized = CAPITALIZED_FIELD_NAMES[name])
+      # In the name's own encoding, as split and join would return it.
+      return capitalized.dup.force_encoding(name.encoding)
+    end
+    name.to_s.split('-'.freeze).each(&:capitalize!).join('-'.freeze)
   end
   private :capitalize
 
